@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	fmt.Printf("Hello Go\n")
+	fmt.Printf("Hello Go111\n")
 	var wg sync.WaitGroup
 	rand.Seed(time.Now().UnixNano())
 	var count = rand.Intn(86400)
