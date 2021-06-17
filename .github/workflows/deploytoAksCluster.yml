@@ -1,0 +1,63 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    
+    - uses: actions/checkout@master
+    
+    - uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Create ACR
+      id: create-acr
+      run: |
+        az acr create -n stevenr1 -g stevenr19a32-rg --location "East US" --sku Standard --admin-enabled
+        echo "::set-output name=acr_username::`az acr credential show -n stevenr1 --query username | xargs`"
+        echo "::set-output name=acr_password::`az acr credential show -n stevenr1 --query passwords[0].value | xargs`"
+        echo "::add-mask::`az acr credential show -n stevenr1 --query passwords[0].value | xargs`"
+
+    - uses: azure/docker-login@v1
+      with:
+        login-server: stevenr1.azurecr.io
+        username: ${{ steps.create-acr.outputs.acr_username }}
+        password: ${{ steps.create-acr.outputs.acr_password }}
+
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/go" -f  "go/Dockerfile" -t stevenr1.azurecr.io/k8s1:${{ github.sha }} --label dockerfile-path=go/Dockerfile
+        docker push stevenr1.azurecr.io/k8s1:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      id: login
+      with:
+         kubeconfig: ${{ secrets.aks_k8s1_kubeConfig }}
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep demo | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace demo`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: demo
+        container-registry-url: stevenr1.azurecr.io
+        container-registry-username: ${{ steps.create-acr.outputs.acr_username }}
+        container-registry-password: ${{ steps.create-acr.outputs.acr_password }}
+        secret-name: k8s1dockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: demo
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          stevenr1.azurecr.io/k8s1:${{ github.sha }}
+        imagepullsecrets: |
+          k8s1dockerauth   
